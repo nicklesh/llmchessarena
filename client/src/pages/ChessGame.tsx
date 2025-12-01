@@ -22,8 +22,10 @@ interface MoveRecord {
 }
 
 export default function ChessGame() {
-  const [whitePlayer, setWhitePlayer] = useState<LLMPlayerId | ''>('');
-  const [blackPlayer, setBlackPlayer] = useState<LLMPlayerId | ''>('');
+  const [whitePlayer, setWhitePlayer] = useState<LLMPlayerId | 'human' | ''>('');
+  const [blackPlayer, setBlackPlayer] = useState<LLMPlayerId | 'human' | ''>('');
+  const [humanWhiteName, setHumanWhiteName] = useState('');
+  const [humanBlackName, setHumanBlackName] = useState('');
   const [matchGames, setMatchGames] = useState<1 | 3 | 5>(1);
   const [timedMatch, setTimedMatch] = useState(true);
   const [moveTimeLimit, setMoveTimeLimit] = useState(60);
@@ -52,11 +54,16 @@ export default function ChessGame() {
   const moveHistoryRef = useRef<string[]>([]);
   const isRequestingMoveRef = useRef(false);
 
-  const whitePlayerName = LLM_PLAYERS.find(p => p.id === whitePlayer)?.name || 'White';
-  const blackPlayerName = LLM_PLAYERS.find(p => p.id === blackPlayer)?.name || 'Black';
+  const currentTurn = game.turn();
+
+  const isHumanWhite = whitePlayer === 'human';
+  const isHumanBlack = blackPlayer === 'human';
+  const isHumanTurn = (currentTurn === 'w' && isHumanWhite) || (currentTurn === 'b' && isHumanBlack);
+
+  const whitePlayerName = isHumanWhite ? humanWhiteName : LLM_PLAYERS.find(p => p.id === whitePlayer)?.name || 'White';
+  const blackPlayerName = isHumanBlack ? humanBlackName : LLM_PLAYERS.find(p => p.id === blackPlayer)?.name || 'Black';
 
   const canStart = whitePlayer !== '' && blackPlayer !== '' && gameStatus === 'idle';
-  const currentTurn = game.turn();
 
   const matchComplete = gameResults.length === matchGames;
 
@@ -87,6 +94,8 @@ export default function ChessGame() {
     startNewGame();
     setWhitePlayer('');
     setBlackPlayer('');
+    setHumanWhiteName('');
+    setHumanBlackName('');
   }, [startNewGame]);
 
   const endGame = useCallback((result: 'white' | 'black' | 'draw', reason: string) => {
@@ -177,15 +186,24 @@ export default function ChessGame() {
 
   const handleMove = useCallback((from: string, to: string, promotion?: string) => {
     if (gameStatus !== 'playing') return;
-    applyMove(from, to, promotion);
-  }, [gameStatus, applyMove]);
+    
+    // Only allow manual moves for human players
+    const isHumanTurn = (currentTurn === 'w' && isHumanWhite) || (currentTurn === 'b' && isHumanBlack);
+    if (isHumanTurn) {
+      applyMove(from, to, promotion);
+    }
+  }, [gameStatus, currentTurn, isHumanWhite, isHumanBlack, applyMove]);
 
   const fetchAIMove = useCallback(async () => {
     if (isRequestingMoveRef.current) return;
     if (gameStatus !== 'playing') return;
 
+    // Skip if it's a human player's turn
+    const isHumanTurn = (currentTurn === 'w' && isHumanWhite) || (currentTurn === 'b' && isHumanBlack);
+    if (isHumanTurn) return;
+
     const currentPlayer = currentTurn === 'w' ? whitePlayer : blackPlayer;
-    if (!currentPlayer) return;
+    if (!currentPlayer || currentPlayer === 'human') return;
 
     const moves = game.moves({ verbose: true });
     if (moves.length === 0) return;
@@ -232,7 +250,7 @@ export default function ChessGame() {
       setIsThinking(false);
       setThinkingPlayer(null);
     }
-  }, [gameStatus, currentTurn, whitePlayer, blackPlayer, game, applyMove]);
+  }, [gameStatus, currentTurn, whitePlayer, blackPlayer, isHumanWhite, isHumanBlack, game, applyMove]);
 
   useEffect(() => {
     if (gameStatus === 'playing' && !isRequestingMoveRef.current) {
@@ -288,6 +306,7 @@ export default function ChessGame() {
 
   const isPlaying = gameStatus === 'playing';
   const isWhiteTurn = currentTurn === 'w';
+  const boardDisabled = gameStatus !== 'playing' || (isThinking && !isHumanTurn);
 
   return (
     <div className="min-h-screen bg-background">
@@ -298,7 +317,7 @@ export default function ChessGame() {
             <h1 className="text-3xl font-bold">Chess Battle Arena</h1>
             <Crown className="w-8 h-8 text-primary" />
           </div>
-          <p className="text-muted-foreground">AI vs AI Chess Matches</p>
+          <p className="text-muted-foreground">AI vs AI, Human vs AI, or Human vs Human Chess</p>
         </header>
 
         <Card>
@@ -310,18 +329,26 @@ export default function ChessGame() {
               <PlayerSelect
                 label="Player 1 (White)"
                 value={whitePlayer}
-                onChange={setWhitePlayer}
+                onChange={(value, name) => {
+                  setWhitePlayer(value);
+                  if (value === 'human' && name) setHumanWhiteName(name);
+                }}
                 side="white"
                 disabled={gameStatus !== 'idle' && gameStatus !== 'finished'}
                 excludePlayer={blackPlayer || undefined}
+                humanName={humanWhiteName}
               />
               <PlayerSelect
                 label="Player 2 (Black)"
                 value={blackPlayer}
-                onChange={setBlackPlayer}
+                onChange={(value, name) => {
+                  setBlackPlayer(value);
+                  if (value === 'human' && name) setHumanBlackName(name);
+                }}
                 side="black"
                 disabled={gameStatus !== 'idle' && gameStatus !== 'finished'}
                 excludePlayer={whitePlayer || undefined}
+                humanName={humanBlackName}
               />
             </div>
 
@@ -336,7 +363,10 @@ export default function ChessGame() {
             />
 
             {(whitePlayer || blackPlayer) && (
-              <SelectedPlayers whitePlayer={whitePlayer} blackPlayer={blackPlayer} />
+              <SelectedPlayers 
+                whitePlayer={whitePlayer as LLMPlayerId | ''} 
+                blackPlayer={blackPlayer as LLMPlayerId | ''} 
+              />
             )}
 
             <GameControls
@@ -380,7 +410,7 @@ export default function ChessGame() {
               <ChessBoard
                 game={game}
                 onMove={handleMove}
-                disabled={gameStatus !== 'playing' || isThinking}
+                disabled={boardDisabled}
                 lastMove={lastMove}
               />
               <div className="mt-3 text-center">
@@ -400,6 +430,7 @@ export default function ChessGame() {
                 {gameStatus === 'playing' && !isThinking && (
                   <span className="text-sm text-muted-foreground">
                     {isWhiteTurn ? whitePlayerName : blackPlayerName}'s turn
+                    {isHumanTurn && ' - Your move!'}
                     {game.isCheck() && ' - Check!'}
                   </span>
                 )}
