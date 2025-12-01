@@ -268,8 +268,8 @@ export default function ChessGame() {
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr_280px] gap-4">
-          <div className="order-2 lg:order-1 space-y-4">
+        <div className="flex flex-col lg:flex-row gap-4 items-stretch">
+          <div className="w-full lg:w-[240px] xl:w-[280px] shrink-0 space-y-4">
             {timedMatch && gameStatus !== 'idle' && (
               <div className="flex justify-center">
                 <Timer
@@ -281,7 +281,7 @@ export default function ChessGame() {
                 />
               </div>
             )}
-            <div className="h-[300px] lg:h-[400px]">
+            <div className="h-[300px] lg:h-[450px]">
               <MoveNotation
                 moves={whiteMoves}
                 side="white"
@@ -291,8 +291,8 @@ export default function ChessGame() {
             </div>
           </div>
 
-          <div className="order-1 lg:order-2">
-            <div className="max-w-lg mx-auto">
+          <div className="flex-1 flex justify-center">
+            <div className="w-full max-w-[500px]">
               <ChessBoard
                 game={game}
                 onMove={handleMove}
@@ -309,7 +309,7 @@ export default function ChessGame() {
             </div>
           </div>
 
-          <div className="order-3 space-y-4">
+          <div className="w-full lg:w-[240px] xl:w-[280px] shrink-0 space-y-4">
             {timedMatch && gameStatus !== 'idle' && (
               <div className="flex justify-center">
                 <Timer
@@ -321,7 +321,7 @@ export default function ChessGame() {
                 />
               </div>
             )}
-            <div className="h-[300px] lg:h-[400px]">
+            <div className="h-[300px] lg:h-[450px]">
               <MoveNotation
                 moves={blackMoves}
                 side="black"
