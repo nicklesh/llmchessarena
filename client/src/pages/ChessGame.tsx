@@ -11,7 +11,9 @@ import SelectedPlayers from '@/components/SelectedPlayers';
 import DrawOfferDialog from '@/components/DrawOfferDialog';
 import GameRules from '@/components/GameRules';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Crown } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Crown, Loader2 } from 'lucide-react';
+import { apiRequest } from '@/lib/queryClient';
 
 interface MoveRecord {
   number: number;
@@ -42,8 +44,13 @@ export default function ChessGame() {
   const [whiteTimerKey, setWhiteTimerKey] = useState(0);
   const [blackTimerKey, setBlackTimerKey] = useState(0);
 
+  const [isThinking, setIsThinking] = useState(false);
+  const [thinkingPlayer, setThinkingPlayer] = useState<'white' | 'black' | null>(null);
+
   const moveStartTimeRef = useRef<number>(0);
   const consecutiveMovesRef = useRef<{ white: string[]; black: string[] }>({ white: [], black: [] });
+  const moveHistoryRef = useRef<string[]>([]);
+  const isRequestingMoveRef = useRef(false);
 
   const whitePlayerName = LLM_PLAYERS.find(p => p.id === whitePlayer)?.name || 'White';
   const blackPlayerName = LLM_PLAYERS.find(p => p.id === blackPlayer)?.name || 'Black';
@@ -66,7 +73,11 @@ export default function ChessGame() {
     setBlackMoves([]);
     setCurrentMoveNumber(1);
     setDrawOffer(null);
+    setIsThinking(false);
+    setThinkingPlayer(null);
     consecutiveMovesRef.current = { white: [], black: [] };
+    moveHistoryRef.current = [];
+    isRequestingMoveRef.current = false;
     resetTimers();
   }, [resetTimers]);
 
@@ -86,6 +97,9 @@ export default function ChessGame() {
     }]);
     setGameStatus('finished');
     setCurrentGameNumber(prev => prev + 1);
+    setIsThinking(false);
+    setThinkingPlayer(null);
+    isRequestingMoveRef.current = false;
   }, [currentGameNumber]);
 
   const checkThreefoldRepetition = useCallback((moveNotation: string, side: 'white' | 'black') => {
@@ -102,30 +116,30 @@ export default function ChessGame() {
     return false;
   }, []);
 
-  const handleMove = useCallback((from: string, to: string, promotion?: string) => {
-    if (gameStatus !== 'playing') return;
-
+  const applyMove = useCallback((from: string, to: string, promotion?: string) => {
     const gameCopy = new Chess(game.fen());
     try {
       const move = gameCopy.move({ from, to, promotion });
-      if (!move) return;
+      if (!move) return false;
 
       const moveTime = timedMatch 
         ? Math.round((Date.now() - moveStartTimeRef.current) / 1000)
         : undefined;
 
       const side = currentTurn === 'w' ? 'white' : 'black';
+      const turnForMove = currentTurn;
 
       if (checkThreefoldRepetition(move.san, side)) {
         const winner = side === 'white' ? 'black' : 'white';
         endGame(winner, `${side === 'white' ? whitePlayerName : blackPlayerName} made same move 3 times`);
-        return;
+        return true;
       }
 
+      moveHistoryRef.current.push(`${from}${to}${promotion || ''}`);
       setGame(gameCopy);
       setLastMove({ from, to });
 
-      if (currentTurn === 'w') {
+      if (turnForMove === 'w') {
         setWhiteMoves(prev => [...prev, { number: currentMoveNumber, notation: move.san, time: moveTime }]);
       } else {
         setBlackMoves(prev => [...prev, { number: currentMoveNumber, notation: move.san, time: moveTime }]);
@@ -133,7 +147,7 @@ export default function ChessGame() {
       }
 
       if (timedMatch) {
-        if (currentTurn === 'w') {
+        if (turnForMove === 'w') {
           setBlackTimerKey(k => k + 1);
         } else {
           setWhiteTimerKey(k => k + 1);
@@ -142,7 +156,7 @@ export default function ChessGame() {
       }
 
       if (gameCopy.isCheckmate()) {
-        const winner = currentTurn === 'w' ? 'white' : 'black';
+        const winner = turnForMove === 'w' ? 'white' : 'black';
         endGame(winner, 'Checkmate');
       } else if (gameCopy.isStalemate()) {
         endGame('draw', 'Stalemate');
@@ -154,10 +168,80 @@ export default function ChessGame() {
         endGame('draw', 'Draw (50-move rule)');
       }
 
+      return true;
     } catch (e) {
-      console.log('Invalid move');
+      console.log('Invalid move:', e);
+      return false;
     }
-  }, [game, gameStatus, currentTurn, currentMoveNumber, timedMatch, checkThreefoldRepetition, endGame, whitePlayerName, blackPlayerName]);
+  }, [game, currentTurn, currentMoveNumber, timedMatch, checkThreefoldRepetition, endGame, whitePlayerName, blackPlayerName]);
+
+  const handleMove = useCallback((from: string, to: string, promotion?: string) => {
+    if (gameStatus !== 'playing') return;
+    applyMove(from, to, promotion);
+  }, [gameStatus, applyMove]);
+
+  const fetchAIMove = useCallback(async () => {
+    if (isRequestingMoveRef.current) return;
+    if (gameStatus !== 'playing') return;
+
+    const currentPlayer = currentTurn === 'w' ? whitePlayer : blackPlayer;
+    if (!currentPlayer) return;
+
+    const moves = game.moves({ verbose: true });
+    if (moves.length === 0) return;
+
+    const legalMoves = moves.map(m => `${m.from}${m.to}${m.promotion || ''}`);
+
+    isRequestingMoveRef.current = true;
+    setIsThinking(true);
+    setThinkingPlayer(currentTurn === 'w' ? 'white' : 'black');
+
+    try {
+      const response = await apiRequest('POST', '/api/chess/move', {
+        playerId: currentPlayer,
+        fen: game.fen(),
+        legalMoves,
+        moveHistory: moveHistoryRef.current,
+      });
+
+      const data = await response.json();
+
+      if (gameStatus !== 'playing') {
+        isRequestingMoveRef.current = false;
+        setIsThinking(false);
+        setThinkingPlayer(null);
+        return;
+      }
+
+      if (data.move) {
+        const from = data.move.slice(0, 2);
+        const to = data.move.slice(2, 4);
+        const promotion = data.move.length > 4 ? data.move[4] : undefined;
+
+        applyMove(from, to, promotion);
+      }
+    } catch (error) {
+      console.error('Failed to get AI move:', error);
+      const moves = game.moves({ verbose: true });
+      if (moves.length > 0) {
+        const randomMove = moves[Math.floor(Math.random() * moves.length)];
+        applyMove(randomMove.from, randomMove.to, randomMove.promotion);
+      }
+    } finally {
+      isRequestingMoveRef.current = false;
+      setIsThinking(false);
+      setThinkingPlayer(null);
+    }
+  }, [gameStatus, currentTurn, whitePlayer, blackPlayer, game, applyMove]);
+
+  useEffect(() => {
+    if (gameStatus === 'playing' && !isRequestingMoveRef.current) {
+      const timer = setTimeout(() => {
+        fetchAIMove();
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, [gameStatus, game.fen(), fetchAIMove]);
 
   const handleStart = useCallback(() => {
     if (matchComplete) {
@@ -275,7 +359,7 @@ export default function ChessGame() {
                 <Timer
                   key={`white-${whiteTimerKey}`}
                   initialTime={moveTimeLimit}
-                  isActive={isPlaying && isWhiteTurn}
+                  isActive={isPlaying && isWhiteTurn && !isThinking}
                   onTimeout={() => handleTimeout('white')}
                   side="white"
                 />
@@ -296,15 +380,35 @@ export default function ChessGame() {
               <ChessBoard
                 game={game}
                 onMove={handleMove}
-                disabled={gameStatus !== 'playing'}
+                disabled={gameStatus !== 'playing' || isThinking}
                 lastMove={lastMove}
               />
-              <div className="mt-2 text-center text-sm text-muted-foreground">
-                {gameStatus === 'idle' && 'Select players and click Start to begin'}
-                {gameStatus === 'playing' && `${isWhiteTurn ? whitePlayerName : blackPlayerName}'s turn`}
-                {gameStatus === 'paused' && 'Game paused'}
-                {gameStatus === 'finished' && 'Game over'}
-                {game.isCheck() && gameStatus === 'playing' && ' - Check!'}
+              <div className="mt-3 text-center">
+                {gameStatus === 'idle' && (
+                  <span className="text-sm text-muted-foreground">
+                    Select players and click Start to begin
+                  </span>
+                )}
+                {gameStatus === 'playing' && isThinking && thinkingPlayer && (
+                  <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                    <Badge variant="secondary" className="animate-pulse">
+                      {thinkingPlayer === 'white' ? whitePlayerName : blackPlayerName} is thinking...
+                    </Badge>
+                  </div>
+                )}
+                {gameStatus === 'playing' && !isThinking && (
+                  <span className="text-sm text-muted-foreground">
+                    {isWhiteTurn ? whitePlayerName : blackPlayerName}'s turn
+                    {game.isCheck() && ' - Check!'}
+                  </span>
+                )}
+                {gameStatus === 'paused' && (
+                  <Badge variant="secondary">Game paused</Badge>
+                )}
+                {gameStatus === 'finished' && (
+                  <Badge variant="secondary">Game over</Badge>
+                )}
               </div>
             </div>
           </div>
@@ -315,7 +419,7 @@ export default function ChessGame() {
                 <Timer
                   key={`black-${blackTimerKey}`}
                   initialTime={moveTimeLimit}
-                  isActive={isPlaying && !isWhiteTurn}
+                  isActive={isPlaying && !isWhiteTurn && !isThinking}
                   onTimeout={() => handleTimeout('black')}
                   side="black"
                 />
