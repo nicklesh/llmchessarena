@@ -1,6 +1,15 @@
 /.git
 /node_modules
+node_modules
+npm-debug.log
 .dockerignore
-.env
 Dockerfile
 fly.toml
+.git
+.gitignore
+README.md
+.env
+.DS_Store
+dist
+build
+.next
