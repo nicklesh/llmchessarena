@@ -48,23 +48,34 @@ const MODEL_CONFIG: Record<string, { provider: string; model: string }> = {
   'deepseek-v3': { provider: 'deepseek', model: 'deepseek-chat' },
 };
 
-const CHESS_SYSTEM_PROMPT = `You are a chess grandmaster AI. Your PRIMARY GOAL is to FINISH THE GAME DECISIVELY - either by winning quickly or avoiding prolonged play.
+const CHESS_SYSTEM_PROMPT = `You are an EXTREMELY AGGRESSIVE chess engine. Your ONLY goal is to WIN or FORCE A QUICK FINISH. Play to destroy your opponent.
 
-CRITICAL OBJECTIVES (in order of priority):
-1. Look for checkmate opportunities - if you can checkmate in 1-2 moves, execute immediately
-2. If winning, push for victory with aggressive attacking moves
-3. If losing, force a quick end or resign - avoid prolonging a losing position
-4. If equal, make solid moves that lead to tactical opportunities or endgame advantage
-5. AVOID stalling, repetitive moves, or defensive shuffling - be decisive
+ABSOLUTE PRIORITY RANKING:
+1. CHECKMATE IN 1-2 MOVES - Execute immediately, no hesitation
+2. FORCING ATTACKS - Generate mating threats, sacrifices for winning positions
+3. PIECE CAPTURE - Take undefended pieces, win material whenever possible
+4. TACTICAL BLOWS - Pins, forks, skewers that win material or create unstoppable threats
+5. KING ATTACKS - Drive the enemy king into the open, create mating nets
+6. SPACE CONTROL - Dominate the center and kingside to maximize attacking chances
+7. POSITION IMPROVEMENT - Only if no tactical shots are available
 
-IMPORTANT RULES:
-1. You MUST respond with ONLY a valid chess move in UCI format (e.g., "e2e4", "g1f3", "e7e8q" for promotion)
-2. The move MUST be from the list of legal moves provided
-3. Do NOT include any explanation, just the move
-4. Consider piece development, king safety, and tactical opportunities
-5. Play aggressively to finish games quickly
+AGGRESSIVE RULES YOU MUST FOLLOW:
+1. Sacrifice pieces (knights, bishops, even rooks) if it leads to checkmate or unstoppable mating attack
+2. Ignore defense - always look for the most forcing attack first
+3. Create multiple threats your opponent cannot defend simultaneously
+4. Push pawns forward to support attacks and restrict the enemy king
+5. Use every piece to coordinate devastating attacks
+6. If winning, convert wins AGGRESSIVELY - no slow maneuvering
+7. If down material, launch desperate attacking combinations for quick victory or loss
+8. Never play passive moves when any forcing move is available
 
-Respond with exactly one move in UCI format, nothing else.`;
+UCI OUTPUT REQUIREMENTS:
+1. Respond with ONLY the move in UCI format (e.g., "e2e4", "e8g8", "e7e8q")
+2. No explanation, no thoughts, no other text
+3. The move MUST be from the provided legal moves list
+4. Pick the MOST FORCING, MOST AGGRESSIVE move available
+
+Respond with exactly one move in UCI format. Nothing else. Be relentless.`;
 
 function buildChessPrompt(fen: string, legalMoves: string[], moveHistory: string[]): string {
   const historyStr = moveHistory.length > 0 
@@ -92,7 +103,7 @@ async function getOpenAIMove(model: string, fen: string, legalMoves: string[], m
   
   // gpt-5 doesn't support temperature parameter
   if (model !== 'gpt-5') {
-    params.temperature = 0.3;
+    params.temperature = 0.1;
   }
   
   const response = await openaiClient.chat.completions.create(params);
@@ -136,7 +147,7 @@ async function getXAIMove(model: string, fen: string, legalMoves: string[], move
       { role: "system", content: CHESS_SYSTEM_PROMPT },
       { role: "user", content: prompt }
     ],
-    temperature: 0.3,
+    temperature: 0.1,
   });
   
   return response.choices[0].message.content?.trim() || '';
@@ -152,7 +163,7 @@ async function getDeepSeekMove(model: string, fen: string, legalMoves: string[],
         { role: "system", content: CHESS_SYSTEM_PROMPT },
         { role: "user", content: prompt }
       ],
-      temperature: 0.3,
+      temperature: 0.1,
     });
     
     return response.choices[0].message.content?.trim() || '';
@@ -173,7 +184,7 @@ async function getKimiMove(model: string, fen: string, legalMoves: string[], mov
         { role: "system", content: CHESS_SYSTEM_PROMPT },
         { role: "user", content: prompt }
       ],
-      temperature: 0.3,
+      temperature: 0.1,
     });
     
     return response.choices[0].message.content?.trim() || '';
